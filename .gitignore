@@ -1,0 +1,8 @@
+# Ansible
+*.retry
+
+# Secrets — never commit
+.vault_pass
+vault_pass.txt
+*.vault
+.env

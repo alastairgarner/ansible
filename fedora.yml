@@ -1,0 +1,383 @@
+---
+# Reproducible Fedora workstation setup — a single playbook.
+#
+# Usage (run locally on each machine):
+#   ansible-galaxy collection install -r requirements.yml
+#   ansible-playbook site.yml --ask-become-pass
+#
+# Run a subset with tags, e.g.:
+#   ansible-playbook site.yml --ask-become-pass --tags dotfiles,shell
+#   ansible-playbook site.yml --ask-become-pass --skip-tags dotfiles
+#
+# Locale, timezone, and keyboard are set by the Fedora installer, so they're
+# intentionally not managed here.
+- name: Set up Fedora workstation
+  hosts: local
+  gather_facts: true
+
+  vars:
+    # The user the dotfiles / per-user tools belong to. Defaults to whoever runs
+    # the playbook (so it works on any machine without editing).
+    target_user: "{{ lookup('env', 'USER') }}"
+    target_home: "/home/{{ target_user }}"
+
+    # Dotfiles
+    dotfiles_repo: "git@github.com:alastairgarner/.dotfiles.git"
+    dotfiles_dir: "{{ target_home }}/.dotfiles"
+
+    # Pinned versions (bump deliberately for reproducibility)
+    nerd_font_version: "v3.4.0"
+    nerd_font_name: "Meslo"
+
+    # Feature toggles: flip to false on machines that don't need a thing
+    install_gui_apps: true        # firefox, vscode, ghostty, obsidian, zen
+    install_dev_runtimes: true    # bun, pnpm
+    enable_tailscale: true
+    enable_syncthing: true
+
+  handlers:
+    - name: Refresh font cache
+      ansible.builtin.command: "fc-cache -f {{ target_home }}/.local/share/fonts"
+      changed_when: true
+
+  pre_tasks:
+    - name: Fail if not running on Fedora
+      ansible.builtin.assert:
+        that:
+          - ansible_facts['distribution'] == "Fedora"
+        fail_msg: "This playbook targets Fedora (found {{ ansible_facts['distribution'] }})."
+        success_msg: "Fedora {{ ansible_facts['distribution_version'] }} detected."
+      tags: always
+
+  tasks:
+    # ------------------------------------------------------------------ system
+    - name: Install core CLI packages
+      become: true
+      ansible.builtin.dnf:
+        name:
+          # Shell / terminal tooling
+          - zsh
+          - tmux
+          - neovim
+          - stow
+          - fzf
+          - zoxide
+          - git
+          - curl
+          - unzip
+          - qpdf
+          # Fonts tooling
+          - fontconfig
+        state: present
+      tags: [system, packages]
+
+    # ------------------------------------------------------- third-party repos
+    - name: Third-party RPM repositories
+      become: true
+      tags: [repos, packages]
+      block:
+        - name: Install dnf plugins (config-manager, copr)
+          ansible.builtin.dnf:
+            name: dnf-plugins-core
+            state: present
+
+        - name: Import Microsoft GPG key
+          ansible.builtin.rpm_key:
+            key: https://packages.microsoft.com/keys/microsoft.asc
+            state: present
+          when: install_gui_apps | bool
+
+        - name: Add VS Code repository
+          ansible.builtin.yum_repository:
+            name: vscode
+            description: Visual Studio Code
+            baseurl: https://packages.microsoft.com/yumrepos/vscode
+            gpgcheck: true
+            gpgkey: https://packages.microsoft.com/keys/microsoft.asc
+            enabled: true
+          when: install_gui_apps | bool
+
+        - name: Import Google GPG key
+          ansible.builtin.rpm_key:
+            key: https://dl.google.com/linux/linux_signing_key.pub
+            state: present
+          when: install_gui_apps | bool
+
+        - name: Add Google Chrome repository
+          ansible.builtin.yum_repository:
+            name: google-chrome
+            description: Google Chrome
+            baseurl: https://dl.google.com/linux/chrome/rpm/stable/x86_64
+            gpgcheck: true
+            gpgkey: https://dl.google.com/linux/linux_signing_key.pub
+            enabled: true
+          when: install_gui_apps | bool
+
+        - name: Add Tailscale repository
+          ansible.builtin.get_url:
+            url: https://pkgs.tailscale.com/stable/fedora/tailscale.repo
+            dest: /etc/yum.repos.d/tailscale.repo
+            mode: "0644"
+          when: enable_tailscale | bool
+
+        - name: Enable Ghostty COPR (scottames/ghostty)
+          community.general.copr:
+            name: scottames/ghostty
+            state: enabled
+          when: install_gui_apps | bool
+
+    # ----------------------------------------------------------- applications
+    - name: GUI applications
+      become: true
+      when: install_gui_apps | bool
+      tags: [packages]
+      block:
+        - name: Install GUI apps from RPM repos
+          ansible.builtin.dnf:
+            name:
+              - firefox
+              - ghostty                # scottames/ghostty COPR
+              - code                   # Microsoft official repo
+              - google-chrome-stable   # Google official repo
+            state: present
+
+        # Obsidian and Zen have no official RPM; Flathub is the vendor-endorsed
+        # Linux package for both.
+        - name: Install Flatpak
+          ansible.builtin.dnf:
+            name: flatpak
+            state: present
+
+        - name: Add Flathub remote
+          community.general.flatpak_remote:
+            name: flathub
+            flatpakrepo_url: https://dl.flathub.org/repo/flathub.flatpakrepo
+            state: present
+
+        - name: Install Flatpak apps (no official RPM)
+          community.general.flatpak:
+            name: "{{ item }}"
+            remote: flathub
+            state: present
+          loop:
+            - md.obsidian.Obsidian   # Obsidian
+            - app.zen_browser.zen    # Zen Browser
+
+    # Per-user default browser (xdg-settings, so no become/root).
+    - name: Set Zen as the default web browser
+      when: install_gui_apps | bool
+      tags: [packages]
+      block:
+        - name: Get current default web browser
+          ansible.builtin.command: xdg-settings get default-web-browser
+          register: current_browser
+          changed_when: false
+          check_mode: false
+
+        - name: Set Zen as the default web browser
+          ansible.builtin.command: xdg-settings set default-web-browser app.zen_browser.zen.desktop
+          when: current_browser.stdout != "app.zen_browser.zen.desktop"
+          changed_when: true
+
+    # ------------------------------------------------------------------ fonts
+    - name: Meslo Nerd Font (per-user, official nerd-fonts release)
+      tags: [fonts]
+      vars:
+        meslo_dir: "{{ target_home }}/.local/share/fonts/{{ nerd_font_name }}NerdFont"
+      block:
+        - name: Ensure user fonts directory exists
+          ansible.builtin.file:
+            path: "{{ meslo_dir }}"
+            state: directory
+            mode: "0755"
+          check_mode: false   # create for real so --check can evaluate the steps below
+
+        - name: Check whether the Nerd Font is already installed
+          ansible.builtin.find:
+            paths: "{{ meslo_dir }}"
+            patterns: "*.ttf"
+          register: installed_font_files
+          check_mode: false
+
+        # unarchive fetches the URL directly (no separate download/cleanup needed).
+        - name: Download and install Meslo Nerd Font
+          ansible.builtin.unarchive:
+            src: "https://github.com/ryanoasis/nerd-fonts/releases/download/{{ nerd_font_version }}/{{ nerd_font_name }}.zip"
+            dest: "{{ meslo_dir }}"
+            remote_src: true
+          when: installed_font_files.matched == 0
+          notify: Refresh font cache
+
+    # ------------------------------------------------------------- gnome prefs
+    # dconf settings are per-user; this must run inside your GNOME session
+    # (a logged-in graphical session) so it can reach the session D-Bus.
+    - name: GNOME desktop preferences
+      tags: [gnome]
+      community.general.dconf:
+        key: "{{ item.key }}"
+        value: "{{ item.value }}"
+        state: present
+      loop:
+        # Keyboard repeat (lower = faster)
+        - { key: /org/gnome/desktop/peripherals/keyboard/delay, value: "uint32 213" }
+        - { key: /org/gnome/desktop/peripherals/keyboard/repeat-interval, value: "uint32 30" }
+        # Touchpad
+        - { key: /org/gnome/desktop/peripherals/touchpad/natural-scroll, value: "false" }
+        - { key: /org/gnome/desktop/peripherals/touchpad/speed, value: "0.4" }
+        # Dark theme
+        - { key: /org/gnome/desktop/interface/color-scheme, value: "'prefer-dark'" }
+        # Desktop background
+        - { key: /org/gnome/desktop/background/picture-uri, value: "'file:///usr/share/backgrounds/gnome/morphogenesis-l.svg'" }
+        - { key: /org/gnome/desktop/background/picture-uri-dark, value: "'file:///usr/share/backgrounds/gnome/morphogenesis-d.svg'" }
+        - { key: /org/gnome/desktop/background/picture-options, value: "'zoom'" }
+      loop_control:
+        label: "{{ item.key }}"
+
+    # --------------------------------------------------------------- dotfiles
+    # Prerequisite on a fresh machine: an SSH key registered with GitHub, since
+    # the repo and several submodules use git@github.com URLs.
+    - name: Dotfiles (clone + submodules + stow)
+      tags: [dotfiles]
+      block:
+        - name: Check whether the dotfiles repo already exists
+          ansible.builtin.stat:
+            path: "{{ dotfiles_dir }}/.git"
+          register: dotfiles_git
+
+        - name: Clone dotfiles repository with submodules
+          ansible.builtin.git:
+            repo: "{{ dotfiles_repo }}"
+            dest: "{{ dotfiles_dir }}"
+            recursive: true
+            accept_hostkey: true
+            # Don't touch an existing checkout (could hold local, uncommitted work).
+            update: false
+          when: not dotfiles_git.stat.exists
+
+        - name: Ensure submodules are initialised and checked out
+          ansible.builtin.command:
+            cmd: git submodule update --init --recursive
+            chdir: "{{ dotfiles_dir }}"
+          register: submodule_update
+          changed_when: "submodule_update.stdout | length > 0"
+
+        - name: Stow dotfiles into home directory
+          ansible.builtin.command:
+            cmd: "stow --verbose=1 --restow --target={{ target_home }} ."
+            chdir: "{{ dotfiles_dir }}"
+          register: stow_result
+          changed_when: >-
+            ('LINK:' in stow_result.stderr) or
+            ('UNLINK:' in stow_result.stderr) or
+            ('LINK:' in stow_result.stdout) or
+            ('UNLINK:' in stow_result.stdout)
+
+    # ------------------------------------------------------------------ shell
+    - name: Set zsh as the default shell
+      become: true
+      ansible.builtin.user:
+        name: "{{ target_user }}"
+        shell: /usr/bin/zsh
+      tags: [shell]
+
+    # --------------------------------------------------------------- services
+    - name: Tailscale and Syncthing
+      become: true
+      tags: [services]
+      block:
+        - name: Install Tailscale
+          ansible.builtin.dnf:
+            name: tailscale
+            state: present
+          when: enable_tailscale | bool
+
+        - name: Enable and start tailscaled
+          ansible.builtin.systemd:
+            name: tailscaled
+            enabled: true
+            state: started
+          when: enable_tailscale | bool
+          # NOTE: auth is still manual: run `sudo tailscale up` once per machine.
+
+        - name: Install Syncthing
+          ansible.builtin.dnf:
+            name: syncthing
+            state: present
+          when: enable_syncthing | bool
+
+        - name: Enable and start Syncthing for the user
+          ansible.builtin.systemd:
+            name: "syncthing@{{ target_user }}.service"
+            enabled: true
+            state: started
+          when: enable_syncthing | bool
+          # Always-on system service for {{ target_user }}. Web UI on :8384
+
+    # ---------------------------------------------------- tailscale systray
+    # The `tailscale systray` applet ships with the client. On GNOME it needs
+    # the AppIndicator extension; on Wayland, wl-clipboard for copy support.
+    # https://tailscale.com/docs/features/client/linux-systray
+    - name: Tailscale system tray (GNOME)
+      when: enable_tailscale | bool and install_gui_apps | bool
+      tags: [services]
+      vars:
+        appindicator_uuid: appindicatorsupport@rgcjonas.gmail.com
+      block:
+        - name: Install AppIndicator extension and Wayland clipboard helper
+          become: true
+          ansible.builtin.dnf:
+            name:
+              - gnome-shell-extension-appindicator
+              - wl-clipboard
+            state: present
+
+        # By default only root can manage Tailscale, so the user-run tray shows
+        # "No permission to manage Tailscale". Registering the user as operator
+        # fixes it. https://tailscale.com/docs/reference/troubleshooting/linux/linux-operator-permission
+        - name: Check whether the user can already manage Tailscale
+          ansible.builtin.command: "tailscale set --operator={{ target_user }}"
+          register: ts_operator_check
+          changed_when: false
+          failed_when: false   # non-zero just means not yet the operator
+
+        - name: Grant the user permission to manage Tailscale (operator)
+          become: true
+          ansible.builtin.command: "tailscale set --operator={{ target_user }}"
+          when: ts_operator_check.rc != 0
+          changed_when: true
+
+        - name: Read currently enabled GNOME extensions
+          ansible.builtin.command: dconf read /org/gnome/shell/enabled-extensions
+          register: enabled_exts_raw
+          changed_when: false
+          check_mode: false
+
+        - name: Enable the AppIndicator extension
+          community.general.dconf:
+            key: /org/gnome/shell/enabled-extensions
+            value: "{{ (existing + [appindicator_uuid]) | to_json }}"
+            state: present
+          vars:
+            existing: >-
+              {{ (enabled_exts_raw.stdout | trim | replace("'", '"') | from_json)
+                 if (enabled_exts_raw.stdout | trim) else [] }}
+          when: appindicator_uuid not in enabled_exts_raw.stdout
+
+        - name: Ensure the autostart directory exists
+          ansible.builtin.file:
+            path: "{{ target_home }}/.config/autostart"
+            state: directory
+            mode: "0755"
+
+        - name: Autostart the Tailscale system tray on login
+          ansible.builtin.copy:
+            dest: "{{ target_home }}/.config/autostart/tailscale-systray.desktop"
+            mode: "0644"
+            content: |
+              [Desktop Entry]
+              Type=Application
+              Name=Tailscale System Tray
+              Comment=Tailscale status menu in the system tray
+              Exec=tailscale systray
+              Terminal=false
+              X-GNOME-Autostart-enabled=true
