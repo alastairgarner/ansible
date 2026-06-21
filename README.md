@@ -18,7 +18,7 @@ node needed).
 | `dev`         | bun and pnpm via official install scripts (no RPM exists) |
 | `dotfiles`    | Clones this repo + submodules and `stow`s it into `$HOME` |
 | `shell`       | Sets zsh as the default shell |
-| `services`    | Enables Tailscale (`tailscaled`) and Syncthing (`syncthing@user`); installs the Tailscale GNOME system-tray applet (AppIndicator extension + autostart) |
+| `services`    | Enables Tailscale (`tailscaled`) and Syncthing (`syncthing@user`); installs the Tailscale and Syncthing GNOME system-tray applets (AppIndicator extension + autostart) |
 
 ## Prerequisites on a fresh machine
 
@@ -97,7 +97,8 @@ ansible-playbook fedora.yml --ask-become-pass \
 - **`~/.env`**: copy `~/.env.template` to `~/.env` and fill in secrets (tokens).
   These are deliberately not in source control.
 - **Log out / back in** after the first run so the zsh default shell, the
-  GNOME AppIndicator extension, and the Tailscale tray applet take effect.
+  GNOME AppIndicator extension, and the Tailscale + Syncthing tray applets take
+  effect.
 
 ## Notes on install sources
 
@@ -107,9 +108,10 @@ RPM-first, using each vendor's officially supported method:
   syncthing, neovim, firefox (Fedora repos).
 - **COPR**: Ghostty — no official Fedora RPM yet; `scottames/ghostty` is the
   path Ghostty's own docs point to.
-- **Flatpak**: Obsidian (`md.obsidian.Obsidian`) and Zen Browser
-  (`app.zen_browser.zen`) — neither ships an official `.rpm`; Flathub is the
-  vendor-endorsed Linux package for both.
+- **Flatpak**: Obsidian (`md.obsidian.Obsidian`), Zen Browser
+  (`app.zen_browser.zen`), and Syncthing Tray
+  (`io.github.martchus.syncthingtray`) — none ship an official `.rpm`; Flathub
+  is the vendor-endorsed Linux package for all three.
 - **Vendor scripts**: bun and pnpm — no official RPMs; the curl install scripts
   are the supported method. Versions are not pinned by these scripts.
 

@@ -313,38 +313,21 @@
           when: enable_syncthing | bool
           # Always-on system service for {{ target_user }}. Web UI on :8384
 
-    # ---------------------------------------------------- tailscale systray
-    # The `tailscale systray` applet ships with the client. On GNOME it needs
-    # the AppIndicator extension; on Wayland, wl-clipboard for copy support.
-    # https://tailscale.com/docs/features/client/linux-systray
-    - name: Tailscale system tray (GNOME)
-      when: enable_tailscale | bool and install_gui_apps | bool
+    # ------------------------------------------------ gnome systray support
+    # Both the Tailscale and Syncthing tray applets render through GNOME's
+    # AppIndicator extension, so its setup (and the autostart dir they share)
+    # lives here, gated on whichever trays are enabled.
+    - name: GNOME system-tray support (AppIndicator)
+      when: install_gui_apps | bool and (enable_tailscale | bool or enable_syncthing | bool)
       tags: [services]
       vars:
         appindicator_uuid: appindicatorsupport@rgcjonas.gmail.com
       block:
-        - name: Install AppIndicator extension and Wayland clipboard helper
+        - name: Install the AppIndicator GNOME extension
           become: true
           ansible.builtin.dnf:
-            name:
-              - gnome-shell-extension-appindicator
-              - wl-clipboard
+            name: gnome-shell-extension-appindicator
             state: present
-
-        # By default only root can manage Tailscale, so the user-run tray shows
-        # "No permission to manage Tailscale". Registering the user as operator
-        # fixes it. https://tailscale.com/docs/reference/troubleshooting/linux/linux-operator-permission
-        - name: Check whether the user can already manage Tailscale
-          ansible.builtin.command: "tailscale set --operator={{ target_user }}"
-          register: ts_operator_check
-          changed_when: false
-          failed_when: false   # non-zero just means not yet the operator
-
-        - name: Grant the user permission to manage Tailscale (operator)
-          become: true
-          ansible.builtin.command: "tailscale set --operator={{ target_user }}"
-          when: ts_operator_check.rc != 0
-          changed_when: true
 
         - name: Read currently enabled GNOME extensions
           ansible.builtin.command: dconf read /org/gnome/shell/enabled-extensions
@@ -369,6 +352,36 @@
             state: directory
             mode: "0755"
 
+    # ---------------------------------------------------- tailscale systray
+    # The `tailscale systray` applet ships with the client. It renders through
+    # the AppIndicator extension (set up above); on Wayland it needs
+    # wl-clipboard for copy support.
+    # https://tailscale.com/docs/features/client/linux-systray
+    - name: Tailscale system tray (GNOME)
+      when: enable_tailscale | bool and install_gui_apps | bool
+      tags: [services]
+      block:
+        - name: Install the Wayland clipboard helper
+          become: true
+          ansible.builtin.dnf:
+            name: wl-clipboard
+            state: present
+
+        # By default only root can manage Tailscale, so the user-run tray shows
+        # "No permission to manage Tailscale". Registering the user as operator
+        # fixes it. https://tailscale.com/docs/reference/troubleshooting/linux/linux-operator-permission
+        - name: Check whether the user can already manage Tailscale
+          ansible.builtin.command: "tailscale set --operator={{ target_user }}"
+          register: ts_operator_check
+          changed_when: false
+          failed_when: false   # non-zero just means not yet the operator
+
+        - name: Grant the user permission to manage Tailscale (operator)
+          become: true
+          ansible.builtin.command: "tailscale set --operator={{ target_user }}"
+          when: ts_operator_check.rc != 0
+          changed_when: true
+
         - name: Autostart the Tailscale system tray on login
           ansible.builtin.copy:
             dest: "{{ target_home }}/.config/autostart/tailscale-systray.desktop"
@@ -379,5 +392,34 @@
               Name=Tailscale System Tray
               Comment=Tailscale status menu in the system tray
               Exec=tailscale systray
+              Terminal=false
+              X-GNOME-Autostart-enabled=true
+
+    # ---------------------------------------------------- syncthing systray
+    # Syncthing has no official tray icon (the daemon is just a web UI on
+    # :8384). Syncthing Tray (Martchus) is the actively maintained applet;
+    # Flathub is its vendor-endorsed Linux package. It renders through the
+    # AppIndicator extension (set up above) and reads the running daemon's
+    # config to connect. https://github.com/Martchus/syncthingtray
+    - name: Syncthing system tray (GNOME)
+      when: enable_syncthing | bool and install_gui_apps | bool
+      tags: [services]
+      block:
+        - name: Install Syncthing Tray (Flatpak)
+          community.general.flatpak:
+            name: io.github.martchus.syncthingtray
+            remote: flathub
+            state: present
+
+        - name: Autostart Syncthing Tray on login
+          ansible.builtin.copy:
+            dest: "{{ target_home }}/.config/autostart/syncthingtray.desktop"
+            mode: "0644"
+            content: |
+              [Desktop Entry]
+              Type=Application
+              Name=Syncthing Tray
+              Comment=Syncthing status menu in the system tray
+              Exec=flatpak run io.github.martchus.syncthingtray
               Terminal=false
               X-GNOME-Autostart-enabled=true
