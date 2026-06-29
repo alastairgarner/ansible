@@ -34,6 +34,7 @@
     install_dev_runtimes: true    # bun, pnpm
     enable_tailscale: true
     enable_syncthing: true
+    enable_docker: true
 
   handlers:
     - name: Refresh font cache
@@ -312,6 +313,43 @@
             state: started
           when: enable_syncthing | bool
           # Always-on system service for {{ target_user }}. Web UI on :8384
+
+    # ----------------------------------------------------------------- docker
+    # Docker Engine (CLI only, no Docker Desktop) via the official Docker repo.
+    # https://docs.docker.com/engine/install/fedora/
+    - name: Docker Engine
+      become: true
+      when: enable_docker | bool
+      tags: [services, repos]
+      block:
+        - name: Add the Docker CE repository
+          ansible.builtin.get_url:
+            url: https://download.docker.com/linux/fedora/docker-ce.repo
+            dest: /etc/yum.repos.d/docker-ce.repo
+            mode: "0644"
+
+        - name: Install Docker Engine
+          ansible.builtin.dnf:
+            name:
+              - docker-ce
+              - docker-ce-cli
+              - containerd.io
+              - docker-buildx-plugin
+              - docker-compose-plugin
+            state: present
+
+        - name: Enable and start docker
+          ansible.builtin.systemd:
+            name: docker
+            enabled: true
+            state: started
+
+        - name: Add the user to the docker group (run docker without sudo)
+          ansible.builtin.user:
+            name: "{{ target_user }}"
+            groups: docker
+            append: true
+          # NOTE: log out / back in for the new group to take effect.
 
     # ------------------------------------------------ gnome systray support
     # Both the Tailscale and Syncthing tray applets render through GNOME's
