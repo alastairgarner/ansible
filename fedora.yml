@@ -298,7 +298,10 @@
             enabled: true
             state: started
           when: enable_tailscale | bool
-          # NOTE: auth is still manual: run `sudo tailscale up` once per machine.
+          # NOTE: auth is still manual: run `sudo tailscale up --operator={{ target_user }}`
+          # once per machine. The --operator flag both authenticates and grants the
+          # user persistent (reboot-surviving) permission to manage Tailscale, which
+          # the systray applet needs.
 
         - name: Install Syncthing
           ansible.builtin.dnf:
@@ -406,19 +409,11 @@
             state: present
 
         # By default only root can manage Tailscale, so the user-run tray shows
-        # "No permission to manage Tailscale". Registering the user as operator
-        # fixes it. https://tailscale.com/docs/reference/troubleshooting/linux/linux-operator-permission
-        - name: Check whether the user can already manage Tailscale
-          ansible.builtin.command: "tailscale set --operator={{ target_user }}"
-          register: ts_operator_check
-          changed_when: false
-          failed_when: false   # non-zero just means not yet the operator
-
-        - name: Grant the user permission to manage Tailscale (operator)
-          become: true
-          ansible.builtin.command: "tailscale set --operator={{ target_user }}"
-          when: ts_operator_check.rc != 0
-          changed_when: true
+        # "No permission to manage Tailscale". The user must be the operator.
+        # Don't set it here: `tailscale set --operator` doesn't persist across
+        # reboots (https://github.com/tailscale/tailscale/issues/18294). Instead
+        # the operator is set via the manual `tailscale up` step (see below),
+        # which ties it to the authenticated profile so it survives reboots.
 
         - name: Autostart the Tailscale system tray on login
           ansible.builtin.copy:

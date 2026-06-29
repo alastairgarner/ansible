@@ -115,8 +115,11 @@ ansible-playbook fedora.yml --ask-become-pass \
 
 ## Manual steps the playbook intentionally leaves to you
 
-- **Tailscale login**: run `sudo tailscale up` once per machine (interactive auth).
-  (Operator permission for the tray applet is set automatically by the playbook.)
+- **Tailscale login**: run `sudo tailscale up --operator=$USER` once per machine
+  (interactive auth). The `--operator` flag also grants the tray applet permission
+  to manage Tailscale and persists across reboots — `tailscale set --operator`
+  does not ([tailscale#18294](https://github.com/tailscale/tailscale/issues/18294)),
+  so don't rely on it.
 - **`~/.env`**: copy `~/.env.template` to `~/.env` and fill in secrets (tokens).
   These are deliberately not in source control.
 - **Log out / back in** after the first run so the zsh default shell, the
