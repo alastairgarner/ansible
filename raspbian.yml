@@ -1,0 +1,321 @@
+---
+# Reproducible Raspbian (Raspberry Pi OS) headless server setup — a single playbook.
+#
+# Usage (run locally on each Pi):
+#   ansible-playbook raspbian.yml --ask-become-pass
+#
+# Run a subset with tags, e.g.:
+#   ansible-playbook raspbian.yml --ask-become-pass --tags dotfiles,shell
+#   ansible-playbook raspbian.yml --ask-become-pass --skip-tags dotfiles
+#
+# Headless: no GUI apps, no desktop prefs, no system trays. Locale, timezone,
+# and keyboard are set by the imager / raspi-config, so they're not managed here.
+- name: Set up Raspbian headless server
+  hosts: local
+  gather_facts: true
+
+  vars:
+    # The user the dotfiles / per-user tools belong to. Defaults to whoever runs
+    # the playbook (so it works on any machine without editing).
+    target_user: "{{ lookup('env', 'USER') }}"
+    target_home: "/home/{{ target_user }}"
+
+    # Dotfiles
+    dotfiles_repo: "git@github.com:alastairgarner/.dotfiles.git"
+    dotfiles_dir: "{{ target_home }}/.dotfiles"
+
+    # Pinned versions (bump deliberately for reproducibility)
+    nerd_font_version: "v3.4.0"
+    nerd_font_name: "Meslo"
+    # Neovim is built from source: Debian's apt package lags well behind.
+    neovim_version: "v0.11.2"
+
+    # Feature toggles: flip to false on machines that don't need a thing
+    install_nerd_font: true
+    enable_tailscale: true
+    enable_docker: true
+
+  handlers:
+    - name: Refresh font cache
+      ansible.builtin.command: "fc-cache -f {{ target_home }}/.local/share/fonts"
+      changed_when: true
+
+  pre_tasks:
+    # 32-bit Pi OS reports "Raspbian"; 64-bit Pi OS reports "Debian". Accept both.
+    - name: Fail if not running on Raspbian/Debian
+      ansible.builtin.assert:
+        that:
+          - ansible_facts['distribution'] in ["Raspbian", "Debian"]
+        fail_msg: "This playbook targets Raspberry Pi OS (found {{ ansible_facts['distribution'] }})."
+        success_msg: "{{ ansible_facts['distribution'] }} {{ ansible_facts['distribution_version'] }} detected."
+      tags: always
+
+  tasks:
+    # ------------------------------------------------------------------ system
+    - name: Install core CLI packages
+      become: true
+      ansible.builtin.apt:
+        name:
+          # Shell / terminal tooling (zoxide + fzf install per-user below, not apt)
+          - zsh
+          - tmux
+          - stow
+          - git
+          - curl
+          - unzip
+          # Fonts tooling
+          - fontconfig
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+      tags: [system, packages]
+
+    # ----------------------------------------------------- per-user CLI tools
+    # zoxide and fzf install via their official scripts into the user's home
+    # (no become), matching a hand-installed setup. Debian's apt versions lag
+    # and land in /usr/bin. Not version-pinned (scripts fetch latest); the
+    # creates: guards keep them idempotent. Re-run manually to update.
+    - name: zoxide (official install script → ~/.local/bin)
+      ansible.builtin.shell:
+        cmd: curl -sSfL https://raw.githubusercontent.com/ajeetdsouza/zoxide/main/install.sh | sh
+        creates: "{{ target_home }}/.local/bin/zoxide"
+      tags: [tools]
+
+    - name: fzf (official git install → ~/.fzf)
+      tags: [tools]
+      block:
+        - name: Clone fzf
+          ansible.builtin.git:
+            repo: https://github.com/junegunn/fzf.git
+            dest: "{{ target_home }}/.fzf"
+            depth: 1
+            version: master
+
+        # --bin: download the binary only, no shell-rc changes (dotfiles own those).
+        - name: Install the fzf binary
+          ansible.builtin.command:
+            cmd: "{{ target_home }}/.fzf/install --bin"
+            creates: "{{ target_home }}/.fzf/bin/fzf"
+
+    # ------------------------------------------------------------------ fonts
+    # Useful only if you run a terminal *on* the Pi; over SSH the font renders
+    # on your client. Toggle install_nerd_font=false to skip.
+    - name: Meslo Nerd Font (per-user, official nerd-fonts release)
+      when: install_nerd_font | bool
+      tags: [fonts]
+      vars:
+        meslo_dir: "{{ target_home }}/.local/share/fonts/{{ nerd_font_name }}NerdFont"
+      block:
+        - name: Ensure user fonts directory exists
+          ansible.builtin.file:
+            path: "{{ meslo_dir }}"
+            state: directory
+            mode: "0755"
+          check_mode: false # create for real so --check can evaluate the steps below
+
+        - name: Check whether the Nerd Font is already installed
+          ansible.builtin.find:
+            paths: "{{ meslo_dir }}"
+            patterns: "*.ttf"
+          register: installed_font_files
+          check_mode: false
+
+        # unarchive fetches the URL directly (no separate download/cleanup needed).
+        - name: Download and install Meslo Nerd Font
+          ansible.builtin.unarchive:
+            src: "https://github.com/ryanoasis/nerd-fonts/releases/download/{{ nerd_font_version }}/{{ nerd_font_name }}.zip"
+            dest: "{{ meslo_dir }}"
+            remote_src: true
+          when: installed_font_files.matched == 0
+          notify: Refresh font cache
+
+    # ----------------------------------------------------------------- neovim
+    # Debian's apt neovim is far behind; build the pinned tag from source.
+    # A full compile on a Pi is slow but only re-runs when neovim_version bumps.
+    - name: Neovim (build from source)
+      become: true
+      tags: [neovim]
+      block:
+        - name: Check the installed Neovim version
+          ansible.builtin.command: nvim --version
+          register: nvim_installed
+          changed_when: false
+          failed_when: false # not installed yet → non-zero, handled below
+
+        - name: Build and install Neovim
+          when: neovim_version | regex_replace('^v', '') not in nvim_installed.stdout
+          block:
+            - name: Install Neovim build dependencies
+              ansible.builtin.apt:
+                name:
+                  - ninja-build
+                  - gettext
+                  - cmake
+                  - build-essential
+                  - curl
+                  - git
+                state: present
+                update_cache: true
+                cache_valid_time: 3600
+
+            - name: Clone the pinned Neovim source
+              ansible.builtin.git:
+                repo: https://github.com/neovim/neovim.git
+                dest: /usr/local/src/neovim
+                version: "{{ neovim_version }}"
+                depth: 1
+
+            # Release build → installs to /usr/local (on PATH ahead of apt's nvim).
+            - name: Compile Neovim (Release)
+              ansible.builtin.command:
+                cmd: make CMAKE_BUILD_TYPE=Release
+                chdir: /usr/local/src/neovim
+              changed_when: true
+
+            - name: Install Neovim
+              ansible.builtin.command:
+                cmd: make install
+                chdir: /usr/local/src/neovim
+              changed_when: true
+
+    # --------------------------------------------------------------- dotfiles
+    # Prerequisite on a fresh machine: an SSH key registered with GitHub, since
+    # the repo and several submodules use git@github.com URLs.
+    - name: Dotfiles (clone + submodules + stow)
+      tags: [dotfiles]
+      block:
+        - name: Check whether the dotfiles repo already exists
+          ansible.builtin.stat:
+            path: "{{ dotfiles_dir }}/.git"
+          register: dotfiles_git
+
+        - name: Clone dotfiles repository with submodules
+          ansible.builtin.git:
+            repo: "{{ dotfiles_repo }}"
+            dest: "{{ dotfiles_dir }}"
+            recursive: true
+            accept_hostkey: true
+            # Don't touch an existing checkout (could hold local, uncommitted work).
+            update: false
+          when: not dotfiles_git.stat.exists
+
+        - name: Ensure submodules are initialised and checked out
+          ansible.builtin.command:
+            cmd: git submodule update --init --recursive
+            chdir: "{{ dotfiles_dir }}"
+          register: submodule_update
+          changed_when: "submodule_update.stdout | length > 0"
+
+        - name: Stow dotfiles into home directory
+          ansible.builtin.command:
+            cmd: "stow --verbose=1 --restow --target={{ target_home }} ."
+            chdir: "{{ dotfiles_dir }}"
+          register: stow_result
+          changed_when: >-
+            ('LINK:' in stow_result.stderr) or
+            ('UNLINK:' in stow_result.stderr) or
+            ('LINK:' in stow_result.stdout) or
+            ('UNLINK:' in stow_result.stdout)
+
+    # ------------------------------------------------------------------ shell
+    - name: Set zsh as the default shell
+      become: true
+      ansible.builtin.user:
+        name: "{{ target_user }}"
+        shell: /usr/bin/zsh
+      tags: [shell]
+
+    # --------------------------------------------------------------- services
+    # Tailscale via the vendor apt repo for Raspberry Pi OS.
+    # https://tailscale.com/download/linux/rpi
+    - name: Tailscale
+      become: true
+      when: enable_tailscale | bool
+      tags: [services, repos]
+      block:
+        - name: Install the Tailscale signing key
+          ansible.builtin.get_url:
+            url: "https://pkgs.tailscale.com/stable/raspbian/{{ ansible_facts['distribution_release'] }}.noarmor.gpg"
+            dest: /usr/share/keyrings/tailscale-archive-keyring.gpg
+            mode: "0644"
+
+        - name: Add the Tailscale apt repository
+          ansible.builtin.get_url:
+            url: "https://pkgs.tailscale.com/stable/raspbian/{{ ansible_facts['distribution_release'] }}.tailscale-keyring.list"
+            dest: /etc/apt/sources.list.d/tailscale.list
+            mode: "0644"
+
+        - name: Install Tailscale
+          ansible.builtin.apt:
+            name: tailscale
+            state: present
+            update_cache: true
+
+        - name: Enable and start tailscaled
+          ansible.builtin.systemd:
+            name: tailscaled
+            enabled: true
+            state: started
+          # NOTE: auth is still manual: run `sudo tailscale up` once per machine.
+
+    # ----------------------------------------------------------------- docker
+    # Docker Engine (CLI only, no Docker Desktop) via the official Docker repo.
+    # Pi OS follows the Debian instructions; its codename (e.g. bookworm) matches
+    # download.docker.com/linux/debian. https://docs.docker.com/engine/install/debian/
+    - name: Docker Engine
+      become: true
+      when: enable_docker | bool
+      tags: [services, repos]
+      block:
+        - name: Ensure the apt keyrings directory exists
+          ansible.builtin.file:
+            path: /etc/apt/keyrings
+            state: directory
+            mode: "0755"
+
+        - name: Install the Docker signing key
+          ansible.builtin.get_url:
+            url: https://download.docker.com/linux/debian/gpg
+            dest: /etc/apt/keyrings/docker.asc
+            mode: "0644"
+
+        - name: Resolve the dpkg architecture (arm64 / armhf)
+          ansible.builtin.command: dpkg --print-architecture
+          register: dpkg_arch
+          changed_when: false
+
+        - name: Add the Docker apt repository
+          ansible.builtin.copy:
+            dest: /etc/apt/sources.list.d/docker.sources
+            mode: "0644"
+            content: |
+              Types: deb
+              URIs: https://download.docker.com/linux/debian
+              Suites: {{ ansible_facts['distribution_release'] }}
+              Components: stable
+              Architectures: {{ dpkg_arch.stdout }}
+              Signed-By: /etc/apt/keyrings/docker.asc
+
+        - name: Install Docker Engine
+          ansible.builtin.apt:
+            name:
+              - docker-ce
+              - docker-ce-cli
+              - containerd.io
+              - docker-buildx-plugin
+              - docker-compose-plugin
+            state: present
+            update_cache: true
+
+        - name: Enable and start docker
+          ansible.builtin.systemd:
+            name: docker
+            enabled: true
+            state: started
+
+        - name: Add the user to the docker group (run docker without sudo)
+          ansible.builtin.user:
+            name: "{{ target_user }}"
+            groups: docker
+            append: true
+          # NOTE: log out / back in for the new group to take effect.

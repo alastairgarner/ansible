@@ -1,3 +1,25 @@
+# Workstation / server setup (Ansible)
+
+Two playbooks, run **locally** on each machine (no control node):
+
+- `fedora.yml` — Fedora workstation (full GUI desktop). Docs below.
+- `raspbian.yml` — Raspberry Pi OS headless server: core CLI packages,
+  Neovim built from source (apt's is too old), Meslo Nerd Font, dotfiles +
+  stow, zsh, and Tailscale. No GUI/desktop/tray.
+
+  ```bash
+  ansible-playbook raspbian.yml --ask-become-pass
+  ansible-playbook raspbian.yml --ask-become-pass --tags dotfiles,shell
+  ```
+
+  Tags: `system`, `tools`, `fonts`, `neovim`, `dotfiles`, `shell`, `services`.
+  Toggles in the `vars:` block: `install_nerd_font`, `enable_tailscale`,
+  `enable_docker`.
+  Pinned: `nerd_font_version`, `neovim_version`. Tailscale login is still
+  manual (`sudo tailscale up`).
+
+---
+
 # Fedora workstation setup (Ansible)
 
 Reproducibly provisions a Fedora machine to match my setup: CLI tooling,
@@ -18,7 +40,7 @@ node needed).
 | `dev`         | bun and pnpm via official install scripts (no RPM exists) |
 | `dotfiles`    | Clones this repo + submodules and `stow`s it into `$HOME` |
 | `shell`       | Sets zsh as the default shell |
-| `services`    | Enables Tailscale (`tailscaled`) and Syncthing (`syncthing@user`); installs the Tailscale and Syncthing GNOME system-tray applets (AppIndicator extension + autostart) |
+| `services`    | Enables Tailscale (`tailscaled`) and Syncthing (`syncthing@user`); installs the Tailscale and Syncthing GNOME system-tray applets (AppIndicator extension + autostart). Installs Docker Engine (CLI only, official repo) and adds you to the `docker` group |
 
 ## Prerequisites on a fresh machine
 
@@ -81,6 +103,7 @@ install_gui_apps: true       # set false on a headless box
 install_dev_runtimes: true   # bun + pnpm
 enable_tailscale: true
 enable_syncthing: true
+enable_docker: true          # Docker Engine, CLI only
 ```
 
 Example — a headless server without GUI apps or syncthing:
