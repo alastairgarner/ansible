@@ -100,17 +100,17 @@ Edit the `vars:` block at the top of `fedora.yml` (or override on the CLI with
 
 ```yaml
 install_gui_apps: true       # set false on a headless box
+install_nerd_font: true
 install_dev_runtimes: true   # bun + pnpm
 enable_tailscale: true
 enable_syncthing: true
 enable_docker: true          # Docker Engine, CLI only
 ```
 
-Example — a headless server without GUI apps or syncthing:
+For a headless Fedora Server, use the included variable profile:
 
 ```bash
-ansible-playbook fedora.yml --ask-become-pass \
-  -e install_gui_apps=false -e enable_syncthing=false
+ansible-playbook fedora.yml --ask-become-pass -e @fedora-server.yml
 ```
 
 ## Manual steps the playbook intentionally leaves to you

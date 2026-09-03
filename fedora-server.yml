@@ -1,0 +1,3 @@
+install_gui_apps: false
+install_nerd_font: false
+enable_syncthing: false

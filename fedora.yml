@@ -31,6 +31,7 @@
 
     # Feature toggles: flip to false on machines that don't need a thing
     install_gui_apps: true        # firefox, vscode, ghostty, obsidian, zen
+    install_nerd_font: true
     install_dev_runtimes: true    # bun, pnpm
     enable_tailscale: true
     enable_syncthing: true
@@ -182,6 +183,7 @@
 
     # ------------------------------------------------------------------ fonts
     - name: Meslo Nerd Font (per-user, official nerd-fonts release)
+      when: install_nerd_font | bool
       tags: [fonts]
       vars:
         meslo_dir: "{{ target_home }}/.local/share/fonts/{{ nerd_font_name }}NerdFont"
@@ -213,6 +215,7 @@
     # dconf settings are per-user; this must run inside your GNOME session
     # (a logged-in graphical session) so it can reach the session D-Bus.
     - name: GNOME desktop preferences
+      when: install_gui_apps | bool
       tags: [gnome]
       community.general.dconf:
         key: "{{ item.key }}"
