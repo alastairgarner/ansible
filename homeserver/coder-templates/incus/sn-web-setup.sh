@@ -72,7 +72,7 @@ if [[ ! -s $NVM_DIR/nvm.sh ]]; then
   git clone --depth 1 --branch v0.40.7 https://github.com/nvm-sh/nvm.git "$NVM_DIR"
 fi
 set +u
-. "$NVM_DIR/nvm.sh"
+. "$NVM_DIR/nvm.sh" --no-use
 nvm install
 nvm alias default "$(< .nvmrc)"
 set -u
