@@ -1,5 +1,7 @@
 # Workstation / server setup (Ansible)
 
+Homeserver Docker, firewalld and Incus config lives in [homeserver/](homeserver/README.md); it is applied separately from Ansible.
+
 Two playbooks, run **locally** on each machine (no control node):
 
 - `fedora.yml` — Fedora workstation (full GUI desktop). Docs below.

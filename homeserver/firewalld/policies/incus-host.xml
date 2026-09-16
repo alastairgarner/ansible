@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<policy target="REJECT">
+  <short>Incus to host</short>
+  <ingress-zone name="incus"/>
+  <egress-zone name="HOST"/>
+  <port port="67" protocol="udp"/>
+  <port port="547" protocol="udp"/>
+  <port port="53" protocol="udp"/>
+  <port port="53" protocol="tcp"/>
+  <rule family="ipv4">
+    <destination address="100.90.71.107"/>
+    <port port="443" protocol="tcp"/>
+    <accept/>
+  </rule>
+</policy>

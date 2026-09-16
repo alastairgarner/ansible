@@ -1,0 +1,12 @@
+description: Incus NIC with per-workspace ingress isolation.
+config: {}
+devices:
+  eth0:
+    name: eth0
+    network: incusbr0
+    security.acls: coder-isolated
+    security.acls.default.ingress.action: reject
+    security.acls.default.egress.action: allow
+    security.ipv4_filtering: "true"
+    security.ipv6_filtering: "true"
+    type: nic

@@ -1,0 +1,4 @@
+description: Reject unsolicited traffic to each Coder workspace NIC.
+config: {}
+ingress: []
+egress: []

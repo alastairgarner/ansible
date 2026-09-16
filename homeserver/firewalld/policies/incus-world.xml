@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<policy target="ACCEPT">
+  <short>Incus outbound IPv4 with local ranges blocked</short>
+  <ingress-zone name="incus"/>
+  <egress-zone name="ANY"/>
+  <rule family="ipv4"><destination address="10.0.0.0/8"/><reject/></rule>
+  <rule family="ipv4"><destination address="172.16.0.0/12"/><reject/></rule>
+  <rule family="ipv4"><destination address="192.168.0.0/16"/><reject/></rule>
+  <rule family="ipv4"><destination address="100.64.0.0/10"/><reject/></rule>
+  <rule family="ipv4"><destination address="169.254.0.0/16"/><reject/></rule>
+  <rule family="ipv4"><destination address="127.0.0.0/8"/><reject/></rule>
+  <rule family="ipv6"><destination address="::/0"/><reject/></rule>
+</policy>
