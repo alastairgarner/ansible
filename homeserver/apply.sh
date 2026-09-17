@@ -8,6 +8,9 @@ if [[ $(incus network get incusbr0 ipv4.address) != 10.66.85.1/24 ]]; then
   exit 1
 fi
 
+sudo install -Dm644 homeserver/modules-load.d/incus.conf /etc/modules-load.d/incus.conf
+sudo modprobe br_netfilter
+
 if ! incus network acl show coder-isolated >/dev/null 2>&1; then
   incus network acl create coder-isolated
 fi

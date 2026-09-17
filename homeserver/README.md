@@ -11,7 +11,7 @@ git pull
 bash homeserver/apply.sh
 ```
 
-The script creates or updates the Incus ACL and profile, installs the static Docker/firewalld files, and clears Docker's global IPv4 forwarding drop. It reloads firewalld or restarts Docker only when their files change; a Docker restart interrupts running Docker containers. `ip-forward-no-drop` prevents Docker from reinstating the forwarding drop, while firewalld still filters forwarding.
+The script loads `br_netfilter` now and at boot, creates or updates the Incus ACL and profile, installs the static Docker/firewalld files, and clears Docker's global IPv4 forwarding drop. It reloads firewalld or restarts Docker only when their files change; a Docker restart interrupts running Docker containers. `ip-forward-no-drop` prevents Docker from reinstating the forwarding drop, while firewalld still filters forwarding.
 
 After applying the host files, push the Coder Incus template from this checkout with `coder templates push incus -d homeserver/coder-templates/incus`. Then recreate test workspaces. It attaches `default` and `coder-isolated`; the latter overrides `eth0`. Do not update a workspace until the host script has succeeded.
 
