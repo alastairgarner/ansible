@@ -3,6 +3,8 @@ config: {}
 ingress: []
 egress:
   - action: reject
+    state: enabled
     destination: 10.66.85.0/24
   - action: reject
+    state: enabled
     destination: ::/0
