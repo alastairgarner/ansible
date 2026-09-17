@@ -332,3 +332,22 @@ module "git-clone" {
   base_dir          = "/home/${local.workspace_user}"
   post_clone_script = local.sn_web_repo ? file("${path.module}/sn-web-setup.sh") : null
 }
+
+module "dotfiles" {
+  count       = data.coder_workspace.me.start_count
+  source      = "registry.coder.com/coder/git-clone/coder"
+  version     = "~> 2.0"
+  agent_id    = coder_agent.main[0].id
+  url         = "git@github.com:alastairgarner/.dotfiles.git"
+  base_dir    = "/home/${local.workspace_user}"
+  folder_name = ".dotfiles"
+
+  post_clone_script = <<-EOT
+    #!/bin/bash
+    set -euo pipefail
+
+    git submodule update --init --recursive
+
+    stow --restow --target="$HOME" .
+  EOT
+}
