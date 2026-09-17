@@ -34,9 +34,13 @@ for file in zones/incus.xml policies/incus-host.xml policies/incus-world.xml; do
     firewall_changed=true
   fi
 done
-if ! sudo cmp -s homeserver/firewalld/direct.xml /etc/firewalld/direct.xml; then
-  sudo install -Dm644 homeserver/firewalld/direct.xml /etc/firewalld/direct.xml
+legacy_dhcp_rule=(ipv4 raw PREROUTING 0 -i incusbr0 -s 0.0.0.0/32 -d 255.255.255.255/32 -p udp --sport 68 --dport 67 -j CT --notrack)
+if sudo firewall-cmd --permanent --direct --query-rule "${legacy_dhcp_rule[@]}" >/dev/null; then
+  sudo firewall-cmd --permanent --direct --remove-rule "${legacy_dhcp_rule[@]}"
   firewall_changed=true
+fi
+if sudo firewall-cmd --direct --query-rule "${legacy_dhcp_rule[@]}" >/dev/null; then
+  sudo firewall-cmd --direct --remove-rule "${legacy_dhcp_rule[@]}"
 fi
 
 if sudo firewall-cmd --permanent --zone=trusted --query-interface=incusbr0 >/dev/null; then

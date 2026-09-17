@@ -9,4 +9,5 @@ devices:
     security.acls.default.egress.action: allow
     security.ipv4_filtering: "true"
     security.ipv6_filtering: "true"
+    security.port_isolation: "true"
     type: nic

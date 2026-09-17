@@ -1,4 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<direct>
-  <rule ipv="ipv4" table="raw" chain="PREROUTING" priority="0">-i incusbr0 -s 0.0.0.0/32 -d 255.255.255.255/32 -p udp --sport 68 --dport 67 -j CT --notrack</rule>
-</direct>

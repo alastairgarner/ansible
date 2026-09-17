@@ -4,7 +4,7 @@ ingress: []
 egress:
   - action: reject
     state: enabled
-    destination: 10.66.85.0/24
+    destination: 10.66.85.2-10.66.85.255
   - action: reject
     state: enabled
     destination: ::/0
