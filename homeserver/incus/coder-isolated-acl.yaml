@@ -1,4 +1,8 @@
-description: Reject unsolicited traffic to each Coder workspace NIC.
+description: Isolate each Coder workspace NIC from other containers.
 config: {}
 ingress: []
-egress: []
+egress:
+  - action: reject
+    destination: 10.66.85.0/24
+  - action: reject
+    destination: ::/0

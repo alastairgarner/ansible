@@ -124,9 +124,10 @@ resource "incus_storage_volume" "home" {
 }
 
 resource "incus_instance" "dev" {
-  running = data.coder_workspace.me.start_count == 1
-  name    = "coder-${lower(data.coder_workspace_owner.me.name)}-${lower(data.coder_workspace.me.name)}"
-  image   = data.coder_parameter.image.value
+  running  = data.coder_workspace.me.start_count == 1
+  name     = "coder-${lower(data.coder_workspace_owner.me.name)}-${lower(data.coder_workspace.me.name)}"
+  image    = data.coder_parameter.image.value
+  profiles = ["default", "coder-isolated"]
 
   config = {
     "limits.cpu"     = data.coder_parameter.cpu.value

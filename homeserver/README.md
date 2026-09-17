@@ -1,37 +1,19 @@
 # Homeserver workspace network
 
-Static host configuration for Fedora + Docker + Incus. These files are not applied by Ansible. Run the commands below on `homeserver` from the repository root. They change networking; keep an SSH session open and stop on any error.
+Static host configuration for Fedora + Docker + Incus. These files are not applied by Ansible. The script expects Docker, firewalld, and Incus with `incusbr0` at `10.66.85.1/24`. After `git pull`, run it on `homeserver` from the repository root. It is safe to rerun; keep a terminal open and stop on any error because it changes networking.
 
-The policy allows workspaces outbound IPv4 and Coder at `100.90.71.107:443`. It blocks other host services, RFC1918/Tailscale/link-local destinations, and outbound IPv6. IPv6 is deliberately blocked because the home LAN has a delegated global IPv6 prefix that can change. The IPv4 denylist covers the current private networks, not every possible non-public address. Incus DNS/DHCP remain available. Each workspace NIC rejects new inbound connections, including from other workspaces, while allowing replies to its outbound connections.
+The policy allows workspaces outbound IPv4 and Coder at `100.90.71.107:443`. It blocks other host services, RFC1918/Tailscale/link-local destinations, and outbound IPv6. IPv6 is deliberately blocked because the home LAN has a delegated global IPv6 prefix that can change. The IPv4 denylist covers the current private networks, not every possible non-public address. Incus DNS/DHCP remain available. Each workspace NIC rejects new inbound connections and outbound traffic to the `10.66.85.0/24` bridge subnet or any IPv6 address, while allowing replies to its outbound connections. Update the ACL if the bridge's IPv4 subnet changes.
 
 ## Apply
 
-First create the Incus ACL and profile (the `create` commands are one-time):
-
 ```sh
-incus network acl create coder-isolated
-incus network acl edit coder-isolated < homeserver/incus/coder-isolated-acl.yaml
-incus profile create coder-isolated
-incus profile edit coder-isolated < homeserver/incus/coder-isolated-profile.yaml
+git pull
+bash homeserver/apply.sh
 ```
 
-Install the host files, remove the old `trusted` binding, and check firewalld before reloading:
+The script creates or updates the Incus ACL and profile, installs the static Docker/firewalld files, and clears Docker's global IPv4 forwarding drop. It reloads firewalld or restarts Docker only when their files change; a Docker restart interrupts running Docker containers. `ip-forward-no-drop` prevents Docker from reinstating the forwarding drop, while firewalld still filters forwarding.
 
-```sh
-sudo install -Dm644 homeserver/docker/daemon.json /etc/docker/daemon.json
-sudo install -Dm644 homeserver/firewalld/zones/incus.xml /etc/firewalld/zones/incus.xml
-sudo install -Dm644 homeserver/firewalld/policies/incus-host.xml /etc/firewalld/policies/incus-host.xml
-sudo install -Dm644 homeserver/firewalld/policies/incus-world.xml /etc/firewalld/policies/incus-world.xml
-sudo firewall-cmd --permanent --zone=trusted --remove-interface=incusbr0
-sudo firewall-cmd --check-config
-sudo firewall-cmd --reload
-sudo systemctl restart docker
-sudo iptables -P FORWARD ACCEPT
-```
-
-The last command clears Docker's existing global IPv4 forwarding drop. `ip-forward-no-drop` prevents Docker from reinstating it; firewalld still filters forwarding. Restarting Docker interrupts running Docker containers.
-
-In the Coder Incus template, set `profiles = ["default", "coder-isolated"]` on `incus_instance.dev`, then push the template and recreate workspaces. The later profile overrides only `eth0`; `default` still supplies the root disk. **Until this template change, workspaces are not isolated from one another.**
+After applying the host files, push the Coder Incus template from this checkout with `coder templates push incus -d homeserver/coder-templates/incus`. Then recreate test workspaces. It attaches `default` and `coder-isolated`; the latter overrides `eth0`. Do not update a workspace until the host script has succeeded.
 
 ## Verify
 
@@ -40,10 +22,12 @@ sudo firewall-cmd --get-zone-of-interface=incusbr0
 sudo firewall-cmd --info-policy=incus-host
 sudo firewall-cmd --info-policy=incus-world
 sudo iptables -S FORWARD | head -1
-incus config show coder-alastairgarner-red --expanded
+incus network show incusbr0
+incus network acl show coder-isolated
+incus profile show coder-isolated
 ```
 
-From each new workspace, confirm GitHub and the Coder URL connect; the bridge address `10.66.85.1:22`, the LAN router `192.168.1.1`, and another workspace address do not. Also retest after reboot. The Coder and LAN addresses are homeserver-specific; update these files if they change.
+From each new workspace, confirm GitHub and the Coder URL connect. Run a known listening service in a second workspace and another host container; verify connections fail in both directions, including to their IPv6 addresses. Also check that `10.66.85.1:22` and the LAN router are unreachable, then retest after reboot. A closed port alone does not prove isolation. The Coder and LAN addresses are homeserver-specific; update these files if they change.
 
 The bridge still uses `ipv4.firewall=false` and `ipv6.firewall=false` as recommended when firewalld manages the bridge. Do not add `incusbr0` back to `trusted`. An Incus profile/ACL is an additional filter, not a replacement for keeping the containers unprivileged and Incus admin access out of them.
 
