@@ -34,6 +34,10 @@ for file in zones/incus.xml policies/incus-host.xml policies/incus-world.xml; do
     firewall_changed=true
   fi
 done
+if ! sudo cmp -s homeserver/firewalld/direct.xml /etc/firewalld/direct.xml; then
+  sudo install -Dm644 homeserver/firewalld/direct.xml /etc/firewalld/direct.xml
+  firewall_changed=true
+fi
 
 if sudo firewall-cmd --permanent --zone=trusted --query-interface=incusbr0 >/dev/null; then
   sudo firewall-cmd --permanent --zone=trusted --remove-interface=incusbr0
